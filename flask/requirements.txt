@@ -1,0 +1,7 @@
+flask
+opencv-python 
+numpy 
+easyocr 
+tensorflow 
+Pillow
+scikit-learn

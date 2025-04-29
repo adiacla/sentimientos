@@ -1,0 +1,217 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<div class="container">
+    <h1>{% block title %}Análisis de Emociones en Texto{% endblock %}</h1>
+
+    <!-- Input Mode Selection -->
+    <div class="mb-3">
+        <label class="form-label">Modo de Entrada:</label>
+        <div>
+            <input type="radio" id="modeDraw" name="inputMode" value="draw" checked>
+            <label for="modeDraw">Dibujar</label>
+            <input type="radio" id="modeType" name="inputMode" value="type" class="ms-3">
+            <label for="modeType">Escribir</label>
+        </div>
+    </div>
+
+    <!-- Drawing Canvas (initially visible) -->
+    <canvas id="drawingCanvas" width="800" height="300" style="border: 1px solid #ccc; display: block;"></canvas>
+
+    <!-- Text Area (initially hidden) -->
+    <textarea id="textInput" rows="5" class="form-control" placeholder="Escribe tu texto aquí..." style="display: none; width: 800px; height: 300px;"></textarea>
+
+    <div class="mt-2">
+        <button id="clearBtn" class="btn btn-secondary">Limpiar</button>
+        <button id="submitBtn" class="btn btn-primary">Analizar Emoción</button>
+    </div>
+
+    <h2>Resultados:</h2>
+    <p><strong>Texto Detectado/Ingresado:</strong> <span id="ocrText"></span></p>
+    <ul id="probList"></ul>
+</div>
+
+<script>
+    const canvas = document.getElementById('drawingCanvas');
+    const ctx = canvas.getContext('2d');
+    const textInput = document.getElementById('textInput');
+    const clearBtn = document.getElementById('clearBtn');
+    const submitBtn = document.getElementById('submitBtn');
+    const ocrTextSpan = document.getElementById('ocrText');
+    const probList = document.getElementById('probList');
+    const modeDrawRadio = document.getElementById('modeDraw');
+    const modeTypeRadio = document.getElementById('modeType');
+
+    let drawing = false;
+    ctx.lineWidth = 4;
+    ctx.lineCap = 'round';
+    ctx.strokeStyle = '#333';
+
+    // Function to get current input mode
+    function getInputMode() {
+        return document.querySelector('input[name="inputMode"]:checked').value;
+    }
+
+    // Function to toggle input elements visibility
+    function toggleInputMode() {
+        const mode = getInputMode();
+        if (mode === 'draw') {
+            canvas.style.display = 'block';
+            textInput.style.display = 'none';
+        } else { // mode === 'type'
+            canvas.style.display = 'none';
+            textInput.style.display = 'block';
+        }
+        clearInputs(); // Clear both when switching
+    }
+
+    // Add event listeners for mode change
+    modeDrawRadio.addEventListener('change', toggleInputMode);
+    modeTypeRadio.addEventListener('change', toggleInputMode);
+
+    // Clear function adapted for both inputs
+    function clearInputs() {
+        // Clear canvas
+        ctx.fillStyle = "#fff";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.beginPath(); // Reset drawing path
+
+        // Clear textarea
+        textInput.value = '';
+
+        // Clear results
+        ocrTextSpan.textContent = '';
+        probList.innerHTML = '';
+    }
+    clearInputs(); // Initial clear
+
+    function getMousePos(e) {
+        const rect = canvas.getBoundingClientRect();
+        const clientX = e.clientX ?? (e.touches && e.touches[0].clientX);
+        const clientY = e.clientY ?? (e.touches && e.touches[0].clientY);
+        return {
+            x: clientX - rect.left,
+            y: clientY - rect.top
+        };
+    }
+
+    function startPosition(e) {
+        if (getInputMode() !== 'draw') return; // Only draw in draw mode
+        e.preventDefault();
+        drawing = true;
+        const {x, y} = getMousePos(e);
+        ctx.beginPath();
+        ctx.moveTo(x, y);
+    }
+
+    function endPosition(e) {
+        if (!drawing) return;
+        e.preventDefault();
+        drawing = false;
+    }
+
+    function draw(e) {
+        if (!drawing || getInputMode() !== 'draw') return; // Only draw in draw mode
+        e.preventDefault();
+        const {x, y} = getMousePos(e);
+        ctx.lineTo(x, y);
+        ctx.stroke();
+    }
+
+
+    clearBtn.addEventListener('click', clearInputs); // Use updated clear function
+    submitBtn.addEventListener('click', submitInput); // Renamed submit function
+
+    canvas.addEventListener('mousedown', startPosition);
+    canvas.addEventListener('mousemove', draw);
+    canvas.addEventListener('mouseup', endPosition);
+    canvas.addEventListener('mouseout', endPosition);
+    canvas.addEventListener('touchstart', startPosition);
+    canvas.addEventListener('touchmove', draw);
+    canvas.addEventListener('touchend', endPosition);
+
+
+    // Renamed and updated submit function
+    async function submitInput() {
+        const mode = getInputMode();
+        let payload = {};
+
+        if (mode === 'draw') {
+            const dataURL = canvas.toDataURL('image/png');
+            // Basic check if canvas is empty (might need refinement)
+            if (isCanvasBlank(canvas)) {
+                 ocrTextSpan.textContent = 'Por favor dibuja algo.';
+                 return;
+            }
+            payload = { image: dataURL };
+            ocrTextSpan.textContent = 'Procesando dibujo...';
+        } else { // mode === 'type'
+            const text = textInput.value.trim();
+            if (!text) {
+                ocrTextSpan.textContent = 'Por favor escribe algo.';
+                return;
+            }
+            payload = { text: text };
+            ocrTextSpan.textContent = 'Procesando texto...';
+        }
+
+        probList.innerHTML = '';
+        submitBtn.disabled = true;
+        clearBtn.disabled = true;
+
+        try {
+            const res = await fetch('/predict', {
+                method: 'POST',
+                headers: {'Content-Type':'application/json'},
+                body: JSON.stringify(payload), // Send the correct payload
+            });
+            const result = await res.json();
+
+            // Display the text (either OCR result or the input text)
+            ocrTextSpan.textContent = result.text || '(sin texto)';
+
+            // Check if prediction is an object (success) or a string (error/info message)
+            if (typeof result.prediction === 'object' && result.prediction !== null) {
+                const probs = result.prediction.all_probabilities || {};
+                const top5 = Object.entries(probs)
+                    .sort((a,b)=> b[1]-a[1])
+                    .slice(0,5);
+                top5.forEach(([emotion,p],idx)=>{
+                    const li = document.createElement('li');
+                    li.className = idx===0 ? 'primary-emotion' : '';
+                    // Display emotion and probability
+                    li.innerHTML = `<span>${emotion}</span><span>${(p*100).toFixed(1)}%</span>`;
+                    probList.appendChild(li);
+                });
+            } else {
+                 // Display the error/info message from the prediction field
+                 const li = document.createElement('li');
+                 li.textContent = `Info: ${result.prediction || 'Error desconocido'}`;
+                 probList.appendChild(li);
+            }
+
+        } catch(err) {
+            console.error(err);
+            ocrTextSpan.textContent = 'Error durante el procesamiento.';
+            probList.innerHTML = '<li>Ocurrió un error. Revisa la consola.</li>';
+        } finally {
+            submitBtn.disabled = false;
+            clearBtn.disabled = false;
+        }
+    }
+
+    // Helper function to check if canvas is blank (simple version)
+    function isCanvasBlank(canvasToCheck) {
+        const context = canvasToCheck.getContext('2d');
+        const pixelBuffer = new Uint32Array(
+            context.getImageData(0, 0, canvasToCheck.width, canvasToCheck.height).data.buffer
+        );
+        // Check if all pixels are the background color (white: 0xFFFFFFFF)
+        // This assumes a white background was initially set.
+        return !pixelBuffer.some(pixel => pixel !== 0xFFFFFFFF);
+    }
+
+    // Initialize mode visibility on load
+    toggleInputMode();
+</script>
+{% endblock %}
