@@ -173,21 +173,26 @@
             // Check if prediction is an object (success) or a string (error/info message)
             if (typeof result.prediction === 'object' && result.prediction !== null) {
                 const probs = result.prediction.all_probabilities || {};
-                const top5 = Object.entries(probs)
-                    .sort((a,b)=> b[1]-a[1])
-                    .slice(0,5);
-                top5.forEach(([emotion,p],idx)=>{
-                    const li = document.createElement('li');
-                    li.className = idx===0 ? 'primary-emotion' : '';
-                    // Display emotion and probability
-                    li.innerHTML = `<span>${emotion}</span><span>${(p*100).toFixed(1)}%</span>`;
-                    probList.appendChild(li);
-                });
+                // Sort predictions and take top 3
+                const sorted = Object.entries(probs).sort((a, b) => b[1] - a[1]).slice(0, 3);
+                if(sorted.length === 3) {
+                    // Create the result summary message with bold emotions
+                    ocrTextSpan.innerHTML = `El texto demuestra <b>"${sorted[0][0]}"</b> con tendencia a <b>"${sorted[1][0]}"</b> y sesgo <b>"${sorted[2][0]}"</b>`;
+                    probList.innerHTML = '';
+                    sorted.forEach(([emotion, p]) => {
+                        const li = document.createElement('li');
+                        li.innerHTML = `<span>${emotion}</span><span>${(p*100).toFixed(1)}%</span>`;
+                        probList.appendChild(li);
+                    });
+                } else {
+                    ocrTextSpan.textContent = result.text || '(sin texto)';
+                    probList.innerHTML = '<li>Predicción incompleta.</li>';
+                }
             } else {
-                 // Display the error/info message from the prediction field
-                 const li = document.createElement('li');
-                 li.textContent = `Info: ${result.prediction || 'Error desconocido'}`;
-                 probList.appendChild(li);
+                const li = document.createElement('li');
+                li.textContent = `Info: ${result.prediction || 'Error desconocido'}`;
+                probList.innerHTML = '';
+                probList.appendChild(li);
             }
 
         } catch(err) {

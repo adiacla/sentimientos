@@ -120,8 +120,7 @@ def predict():
     # Return the original text (from OCR or input) and the prediction result/status
     return jsonify({"text": ocr_text, "prediction": prediction_result})
 
-# Optional: Add main execution block if running directly
-# if __name__ == '__main__':
-#    # Set debug=False for production
-#    # Consider using a production server like gunicorn or waitress
-#    app.run(debug=True, host='0.0.0.0', port=5000)
+if __name__ == '__main__':
+#    Set debug=False for production
+#    Consider using a production server like gunicorn or waitress
+    app.run(debug=True, host='0.0.0.0', port=7860)
