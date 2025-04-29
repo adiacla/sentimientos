@@ -19,15 +19,22 @@
     <canvas id="drawingCanvas" width="800" height="300" style="border: 1px solid #ccc; display: block;"></canvas>
 
     <!-- Text Area (initially hidden) -->
-    <textarea id="textInput" rows="5" class="form-control" placeholder="Escribe tu texto aquí..." style="display: none; width: 800px; height: 300px;"></textarea>
+    <textarea id="textInput" rows="5" class="form-control" placeholder="Escribe tu texto aquí..."
+        style="display: none; width: 800px; height: 300px;"></textarea>
 
     <div class="mt-2">
         <button id="clearBtn" class="btn btn-secondary">Limpiar</button>
         <button id="submitBtn" class="btn btn-primary">Analizar Emoción</button>
     </div>
 
+    <!-- Moved this section up -->
+    <p><strong>Texto Detectado/Ingresado:</strong> <span id="ocrText"
+            style="background-color: #f8f9fa;  border-radius: 3px; display: block; margin-top: 2px; min-height: 24px;"></span>
+    </p>
+    <br>
     <h2>Resultados:</h2>
-    <p><strong>Texto Detectado/Ingresado:</strong> <span id="ocrText"></span></p>
+    <!-- Add a paragraph for the prediction summary -->
+    <p id="predictionSummary"></p>
     <ul id="probList"></ul>
 </div>
 
@@ -39,6 +46,8 @@
     const submitBtn = document.getElementById('submitBtn');
     const ocrTextSpan = document.getElementById('ocrText');
     const probList = document.getElementById('probList');
+    // Get the new summary element
+    const predictionSummaryP = document.getElementById('predictionSummary');
     const modeDrawRadio = document.getElementById('modeDraw');
     const modeTypeRadio = document.getElementById('modeType');
 
@@ -81,6 +90,7 @@
 
         // Clear results
         ocrTextSpan.textContent = '';
+        predictionSummaryP.innerHTML = ''; // Clear summary
         probList.innerHTML = '';
     }
     clearInputs(); // Initial clear
@@ -99,7 +109,7 @@
         if (getInputMode() !== 'draw') return; // Only draw in draw mode
         e.preventDefault();
         drawing = true;
-        const {x, y} = getMousePos(e);
+        const { x, y } = getMousePos(e);
         ctx.beginPath();
         ctx.moveTo(x, y);
     }
@@ -113,7 +123,7 @@
     function draw(e) {
         if (!drawing || getInputMode() !== 'draw') return; // Only draw in draw mode
         e.preventDefault();
-        const {x, y} = getMousePos(e);
+        const { x, y } = getMousePos(e);
         ctx.lineTo(x, y);
         ctx.stroke();
     }
@@ -140,8 +150,8 @@
             const dataURL = canvas.toDataURL('image/png');
             // Basic check if canvas is empty (might need refinement)
             if (isCanvasBlank(canvas)) {
-                 ocrTextSpan.textContent = 'Por favor dibuja algo.';
-                 return;
+                ocrTextSpan.textContent = 'Por favor dibuja algo.';
+                return;
             }
             payload = { image: dataURL };
             ocrTextSpan.textContent = 'Procesando dibujo...';
@@ -155,6 +165,8 @@
             ocrTextSpan.textContent = 'Procesando texto...';
         }
 
+        // Clear previous results
+        predictionSummaryP.innerHTML = ''; // Clear summary paragraph
         probList.innerHTML = '';
         submitBtn.disabled = true;
         clearBtn.disabled = true;
@@ -162,12 +174,17 @@
         try {
             const res = await fetch('/predict', {
                 method: 'POST',
-                headers: {'Content-Type':'application/json'},
+                headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload), // Send the correct payload
             });
             const result = await res.json();
 
-            // Display the text (either OCR result or the input text)
+            // Add debug console output
+            console.log("Backend response:", result);
+            console.log("Detected text:", result.text);
+
+            // Display the text (either OCR result or the input text) FIRST
+            // Use textContent for plain text - NOT innerHTML to avoid any confusion
             ocrTextSpan.textContent = result.text || '(sin texto)';
 
             // Check if prediction is an object (success) or a string (error/info message)
@@ -175,30 +192,35 @@
                 const probs = result.prediction.all_probabilities || {};
                 // Sort predictions and take top 3
                 const sorted = Object.entries(probs).sort((a, b) => b[1] - a[1]).slice(0, 3);
-                if(sorted.length === 3) {
-                    // Create the result summary message with bold emotions
-                    ocrTextSpan.innerHTML = `El texto demuestra <b>"${sorted[0][0]}"</b> con tendencia a <b>"${sorted[1][0]}"</b> y sesgo <b>"${sorted[2][0]}"</b>`;
+                if (sorted.length === 3) {
+                    // Create the result summary message
+                    const summaryMsg = `El texto demuestra <b>"${sorted[0][0]}"</b> con tendencia a <b>"${sorted[1][0]}"</b> y sesgo <b>"${sorted[2][0]}"</b>`;
+                    // Put summary message in its dedicated paragraph
+                    predictionSummaryP.innerHTML = summaryMsg;
+                    // Clear and populate the probability list
                     probList.innerHTML = '';
                     sorted.forEach(([emotion, p]) => {
                         const li = document.createElement('li');
-                        li.innerHTML = `<span>${emotion}</span><span>${(p*100).toFixed(1)}%</span>`;
+                        li.innerHTML = `<span>${emotion}</span><span>${(p * 100).toFixed(1)}%</span>`;
                         probList.appendChild(li);
                     });
                 } else {
-                    ocrTextSpan.textContent = result.text || '(sin texto)';
-                    probList.innerHTML = '<li>Predicción incompleta.</li>';
+                    // Handle incomplete prediction data
+                    predictionSummaryP.textContent = 'Predicción incompleta.'; // Show info in summary area
+                    probList.innerHTML = ''; // Clear list
                 }
             } else {
-                const li = document.createElement('li');
-                li.textContent = `Info: ${result.prediction || 'Error desconocido'}`;
-                probList.innerHTML = '';
-                probList.appendChild(li);
+                // Handle info/error messages from the backend prediction field
+                predictionSummaryP.textContent = `Info: ${result.prediction || 'Error desconocido'}`; // Show info in summary area
+                probList.innerHTML = ''; // Clear list
             }
 
-        } catch(err) {
-            console.error(err);
-            ocrTextSpan.textContent = 'Error durante el procesamiento.';
-            probList.innerHTML = '<li>Ocurrió un error. Revisa la consola.</li>';
+        } catch (err) {
+            console.error("Fetch error:", err);
+            // Keep detected text if available, show error in summary
+            ocrTextSpan.textContent = ocrTextSpan.textContent || 'Error durante el procesamiento.'; // Keep text if already set
+            predictionSummaryP.textContent = 'Ocurrió un error de comunicación. Revisa la consola.'; // Show error in summary area
+            probList.innerHTML = ''; // Clear list
         } finally {
             submitBtn.disabled = false;
             clearBtn.disabled = false;

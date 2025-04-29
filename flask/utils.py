@@ -1,17 +1,32 @@
 import re
 import unicodedata
-import cv2
 import numpy as np
-import easyocr
 from tensorflow.keras.preprocessing.sequence import pad_sequences
 from config import MAX_SEQUENCE_LENGTH
+from rapidocr import RapidOCR
+from PIL import Image
+import io
+import tempfile
+import os
+import traceback
 
-# Initialize easyocr Reader (load the model only once)
-# Specify the language(s) you want to detect, e.g., ['en'] for English
-print("--- Initializing EasyOCR Reader ---")
-# This might take a moment when the application starts
-reader = easyocr.Reader(['en'], gpu=False) # Set gpu=True if you have a compatible GPU and PyTorch installed
-print("--- EasyOCR Reader Initialized ---")
+# Initialize RapidOCR engine
+engine = RapidOCR()
+
+# Monkey‑patch DynamicCache so chat() won’t blow up on get_max_length
+try:
+    from accelerate.utils import DynamicCache
+
+    if not hasattr(DynamicCache, "get_max_length"):
+
+        def get_max_length(self):
+            # accelerate’s cache may expose cache_size or max_size
+            return getattr(self, "cache_size", None) or getattr(self, "max_size", None)
+
+        DynamicCache.get_max_length = get_max_length
+except ImportError:
+    pass
+
 
 # Text cleaning function
 def clean_text(text):
@@ -26,59 +41,54 @@ def clean_text(text):
     text = re.sub(r"\s+", " ", text).strip()
     return text
 
-# Image preprocessing for OCR
-def preprocess_image(img_bytes):
-    """Converts image bytes to OpenCV format and applies preprocessing for OCR."""
+
+# Perform OCR using RapidOCR
+def perform_ocr(img_bytes):
+    """Performs OCR on the image bytes using RapidOCR."""
+    if not img_bytes:
+        print("OCR skipped: Input image bytes are empty.")
+        return None
+
+    temp_file_path = None
     try:
-        nparr = np.frombuffer(img_bytes, np.uint8)
-        img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-        if img is None:
-            print("Error: cv2.imdecode failed.")
-            return None
+        # Load image and save to temp file for RapidOCR
+        image = Image.open(io.BytesIO(img_bytes)).convert("RGB")
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
+            image.save(tmp, format="PNG")
+            temp_file_path = tmp.name
 
-        # 1. Convert to grayscale
-        img_gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        # Run RapidOCR - it returns a RapidOCROutput object
+        result_object = engine(temp_file_path)
 
-        # 2. Apply adaptive thresholding
-        # Use THRESH_BINARY_INV because input is black text on white background
-        # Parameters (block size, C) might need tuning
-        img_thresh = cv2.adaptiveThreshold(img_gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-                                           cv2.THRESH_BINARY_INV, 15, 8)
+        # Check if the result object exists and has the 'txts' attribute
+        if result_object and hasattr(result_object, "txts"):
+            ocr_lines = result_object.txts  # Access the 'txts' attribute
 
-        # 3. Apply morphological opening to remove small noise/dots
-        # Kernel size might need tuning
-        kernel = np.ones((2,2), np.uint8)
-        img_clean = cv2.morphologyEx(img_thresh, cv2.MORPH_OPEN, kernel)
+            # Check if the txts attribute is not None and contains text
+            if ocr_lines:
+                result_text = " ".join(ocr_lines)  # Join the list/tuple of strings
+                print(f"RapidOCR Result: '{result_text}'")
+                return result_text.strip()
+            else:
+                print("RapidOCR returned an empty 'txts' attribute.")
+                return ""
+        else:
+            # Handle cases where engine() returned None or an object without 'txts'
+            print("RapidOCR engine returned no result object or object lacks 'txts'.")
+            print(f"Result object was: {result_object}")
+            return ""  # Or None, depending on desired behavior
 
-        # Optional: Add slight blur if needed (before or after thresholding)
-        # img_blur = cv2.medianBlur(img_gray, 3) # Example before thresholding
-        # img_blur = cv2.medianBlur(img_clean, 3) # Example after opening
-
-        # Optional: Deskewing could be added here if necessary
-
-        # Return the preprocessed image (binary)
-        return img_clean
     except Exception as e:
-        print(f"Error during image preprocessing: {e}")
+        print(f"Error during OCR with RapidOCR: {e}")
+        traceback.print_exc()
         return None
+    finally:
+        if temp_file_path and os.path.exists(temp_file_path):
+            try:
+                os.remove(temp_file_path)
+            except OSError as oe:
+                print(f"Error removing temporary file {temp_file_path}: {oe}")
 
-# Perform OCR
-def perform_ocr(img):
-    """Performs OCR on the preprocessed image using EasyOCR."""
-    if img is None:
-        print("OCR skipped: Input image is None.")
-        return None
-    try:
-        # Use easyocr reader
-        # detail=0 returns only the text
-        # paragraph=True attempts to join nearby text boxes into paragraphs
-        results = reader.readtext(img, detail=0, paragraph=True)
-        text = " ".join(results) # Join detected text blocks
-        print(f"EasyOCR Result: '{text}'")
-        return text.strip()
-    except Exception as e:
-        print(f"Error during EasyOCR: {e}")
-        return None
 
 # Preprocess text for the model
 def preprocess_text_for_model(text, tokenizer):
@@ -94,7 +104,10 @@ def preprocess_text_for_model(text, tokenizer):
 
         sequences = tokenizer.texts_to_sequences([cleaned_text])
         padded_sequences = pad_sequences(
-            sequences, maxlen=MAX_SEQUENCE_LENGTH, padding="post", truncating="post" # Use imported constant
+            sequences,
+            maxlen=MAX_SEQUENCE_LENGTH,
+            padding="post",
+            truncating="post",  # Use imported constant
         )
 
         print(
@@ -105,4 +118,3 @@ def preprocess_text_for_model(text, tokenizer):
     except Exception as e:
         print(f"Error during text preprocessing: {e}")
         return None
-
