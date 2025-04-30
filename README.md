@@ -4,5 +4,5 @@ Use el corpus de este github para crear un modelo RNN LSTM para determinar la em
 
 referencia https://github.com/AlejandroSalme/TFG-Corpus_AnalisisEmociones_UMU/blob/main/corpus_compilation.ipynb
 
-Link del modelo: https://drive.google.com/file/d/1sr4fv_bc8QsgswzCCKkX4JHjM_EHYT92/view?usp=drive_link
+Link del modelo: https://drive.google.com/file/d/1uJQpe4JOAYAEUYDe10wLOusf0S5_f1bs/view?usp=sharing
 
